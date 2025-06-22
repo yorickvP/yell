@@ -44,7 +44,9 @@ def models_list():
 
 command_completer = NestedCompleter.from_nested_dict(
     {
-        "/model": FuzzyWordCompleter(cast(Callable[[], Sequence[str]], models_list), WORD=True),
+        "/model": FuzzyWordCompleter(
+            cast(Callable[[], Sequence[str]], models_list), WORD=True
+        ),
         "/quit": None,
         "/last": None,
         "/options": None,

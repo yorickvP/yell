@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "click>=8.2.1",
     "llm>=0.26",
     "llm-anthropic>=0.17",
     "llm-echo>=0.2",
@@ -28,3 +29,6 @@ dev = [
 
 [project.scripts]
 yell = "yell.index:app"
+
+[tool.deptry.per_rule_ignores]
+DEP002 = ["llm-anthropic", "llm-echo", "llm-gemini"]

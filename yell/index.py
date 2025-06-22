@@ -125,7 +125,9 @@ def main(
     llm.migrations.migrate(db)
     conversation = None
     if conversation_id or _continue:
-        conversation = cast(llm.Conversation | None, llm.cli.load_conversation(conversation_id))
+        conversation = cast(
+            llm.Conversation | None, llm.cli.load_conversation(conversation_id)
+        )
         if conversation:
             for resp in conversation.responses:
                 if resp.prompt._prompt:
@@ -146,7 +148,6 @@ def main(
     kwargs = {}
     if validated_options:
         kwargs["options"] = validated_options
-    usage = None
     session.set_model(model)
 
     if system:
@@ -175,7 +176,9 @@ def main(
                             if len(words) > 1:
                                 session.set_model(llm.get_model(words[1]))
                             else:
-                                session.set_model(cast(llm.Model, session.conversation.model))
+                                session.set_model(
+                                    cast(llm.Model, session.conversation.model)
+                                )
                             continue
                         case "/fragment":
                             for frag in llm.cli.resolve_fragments(
