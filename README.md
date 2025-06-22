@@ -1,4 +1,4 @@
-# YELL >�=�
+# YELL 🦙💬  a slightly better LLM terminal interface
 
 <p align="center">
   <img src="logo.svg" alt="YELL Logo" width="200">
@@ -11,7 +11,6 @@ A terminal LLM client with enhanced editing and output capabilities.
 - **Better Input**: Advanced editing support with `prompt_toolkit`
   - Multiline input with Enter/Shift+Enter keybindings
   - Command completion and history
-  - Vi/Emacs-style cursor modes
 
 - **Better Output**: Rich markdown rendering with `rich`
   - Real-time streaming markdown display
@@ -22,6 +21,11 @@ A terminal LLM client with enhanced editing and output capabilities.
   - Support for multiple providers (Anthropic, Gemini, etc.)
   - Conversation persistence and resumption
   - Fragment and attachment support
+
+
+## Demo
+[demo.webm](https://github.com/user-attachments/assets/7d708fa9-93bc-4045-8a7e-dd6a77892b31)
+
 
 ## Installation
 
@@ -36,7 +40,8 @@ uv tool install git+https://github.com/yorickvp/yell
 ```
 
 ### Setup
-You'll need to configure API keys first:
+This depends on [`llm`](https://github.com/simonw/llm) to talk to models.
+You should install that and configure API keys first:
 ```bash
 llm keys set openai
 # or
@@ -97,7 +102,6 @@ yell -m gpt-4 -o temperature=0.7 -o max_tokens=2000
 - **rich**: Rich text and markdown rendering
 - **llm**: LLM provider abstraction
 - **typer**: CLI framework
-- **sqlite-utils**: Conversation storage
 
 ## Development
 
