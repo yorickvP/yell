@@ -1,3 +1,4 @@
+from typing import Callable, Sequence, cast
 from prompt_toolkit import filters
 from prompt_toolkit.application import get_app
 from prompt_toolkit.completion import (
@@ -43,7 +44,7 @@ def models_list():
 
 command_completer = NestedCompleter.from_nested_dict(
     {
-        "/model": FuzzyWordCompleter(models_list, WORD=True),
+        "/model": FuzzyWordCompleter(cast(Callable[[], Sequence[str]], models_list), WORD=True),
         "/quit": None,
         "/last": None,
         "/options": None,
