@@ -1,0 +1,30 @@
+[project]
+name = "yell"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "llm>=0.26",
+    "llm-anthropic>=0.17",
+    "llm-echo>=0.2",
+    "llm-gemini>=0.23",
+    "prompt-toolkit>=3.0.51",
+    "rich>=14.0.0",
+    "sqlite-utils>=3.38",
+    "typer>=0.16.0",
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "deptry>=0.23.0",
+    "pyright>=1.1.402",
+    "ruff>=0.12.0",
+]
+
+[project.scripts]
+yell = "yell.index:app"
