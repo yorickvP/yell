@@ -88,7 +88,7 @@ def complete_option_names(ctx: typer.Context, incomplete: str):
             yield (k, (v.description or "").split(".")[0])
 
 
-@app.command()
+@app.command(help="🦙💬 YELL | a slightly better LLM terminal interface")
 def main(
     *,
     model_id: Annotated[
