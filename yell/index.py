@@ -1,35 +1,42 @@
+import sys
 from datetime import datetime
 from functools import partial
 from typing import Annotated, Any, Callable, Iterable, cast
-from click.types import ParamType
+
 import llm
 import llm.cli
 import llm.migrations
+import rich
+import rich.table
+import sqlite_utils
+import textual
+import textual.app
+import textual.command
+import textual.events
+import textual.widgets
+import typer
+from click.types import ParamType
 from llm.models import AsyncChainResponse, AsyncModel
 from textual.actions import SkipAction
 from textual.app import ComposeResult, SystemCommand
-import textual.app
 from textual.binding import Binding
-import textual.events
 from textual.screen import Screen
-import typer
-import sqlite_utils
-import rich
-import rich.table
-import textual
-import textual.widgets
-import textual.command
-import sys
-from .input import run as run_prompt
-from .input import models_list
-from .output import Format
 
 __all__ = ["app"]
 
 from textual._ansi_sequences import ANSI_SEQUENCES_KEYS
+
+
 class ShEnter:
     value = "shift+enter"
 ANSI_SEQUENCES_KEYS["\x1b\r"] = (ShEnter(),)
+
+
+def models_list():
+    for model_with_aliases in llm.get_models_with_aliases():
+        yield model_with_aliases.model.model_id
+        yield from model_with_aliases.aliases
+
 
 class ChatSession:
     def __init__(self, model: llm.Model, conversation: llm.AsyncConversation | None):
@@ -133,7 +140,6 @@ def main(
             autocompletion=complete_option_names,
         ),
     ] = None,
-    format: Annotated[Format, None] = Format.markdown,
 ):
     # prompt_session = PromptSession()
     # init code from cli.py
@@ -182,7 +188,6 @@ def main(
         rich.print(f"Conversation saved as [green not bold]{session.conversation.id}")
     sys.exit(0)
 
-    # renderer = format.to_renderer()
 
 class YellInput(textual.widgets.TextArea):
     BINDINGS = [

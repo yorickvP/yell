@@ -10,7 +10,6 @@ dependencies = [
     "llm-anthropic>=0.17",
     "llm-echo>=0.2",
     "llm-gemini>=0.26",
-    "prompt-toolkit>=3.0.51",
     "rich>=14.0.0",
     "sqlite-utils>=3.38",
     "typer>=0.19.0",
