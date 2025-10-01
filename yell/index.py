@@ -22,6 +22,8 @@ from textual.app import ComposeResult, SystemCommand
 from textual.binding import Binding
 from textual.screen import Screen
 
+from .session import ChatSession
+
 __all__ = ["app"]
 
 from textual._ansi_sequences import ANSI_SEQUENCES_KEYS
@@ -37,63 +39,6 @@ def models_list():
         yield model_with_aliases.model.model_id
         yield from model_with_aliases.aliases
 
-
-class ChatSession:
-    def __init__(self, model: llm.Model, conversation: llm.AsyncConversation | None):
-        self.console = rich.get_console()
-        self.fragments: list[llm.Fragment] = []
-        self.attachments: list[llm.Attachment] = []
-        self.system_fragments: list[llm.Fragment | llm.Attachment] = []
-        self.system: str | None = None
-
-        if conversation is None:
-            self.conversation = llm.AsyncConversation(model)
-            # self.info(f"Starting conversation [green not bold]{self.conversation.id}")
-        else:
-            self.conversation = conversation
-            self.info(
-                f"Resuming conversation [green not bold]{conversation.id}[/] ({len(conversation.responses)} responses)"
-            )
-
-    def attach(self, frag: llm.Fragment | llm.Attachment, *, system: bool = False):
-        if isinstance(frag, llm.Fragment):
-            self.info(f"Added {'system ' if system else ''}fragment [b]{frag.source}")
-            if system:
-                self.system_fragments.append(frag)
-            else:
-                self.fragments.append(frag)
-        elif isinstance(frag, llm.Attachment):
-            self.info(
-                f"Added {'system ' if system else ''}attachment [b]{frag.type} {frag.path} {frag.url}"
-            )
-            if system:
-                self.system_fragments.append(frag)
-            else:
-                self.attachments.append(frag)
-
-    def info(self, *args):
-        # self.console.print(*args, style="cyan italic")
-        pass
-
-    def set_model(self, model: AsyncModel):
-        self.conversation.model = model
-        self.info(f"Chatting with [b black]{model.model_id}")
-
-    def run(self, text, options) -> llm.models.AsyncChainResponse:
-        response = self.conversation.chain(
-            text,
-            fragments=[str(f) for f in self.fragments],
-            system_fragments=[str(f) for f in self.system_fragments],
-            attachments=self.attachments,
-            system=self.system,
-            options=options,
-        )
-
-        self.system = None
-        self.system_fragments = []
-        self.fragments = []
-        self.attachments = []
-        return response
 
 
 app = typer.Typer()
@@ -141,7 +86,6 @@ def main(
         ),
     ] = None,
 ):
-    # prompt_session = PromptSession()
     # init code from cli.py
     log_path = llm.cli.logs_db_path()
     (log_path.parent).mkdir(parents=True, exist_ok=True)
@@ -163,26 +107,22 @@ def main(
         else:
             model_id = llm.get_default_model()
     model = llm.get_async_model(model_id)
-    session = ChatSession(model, conversation)
+    session = ChatSession(model, conversation, db)
     validated_options = llm.cli.get_model_options(model.model_id)
     if options:
         merged_options = {**validated_options, **dict(options)}
         validated_options = model.Options.model_validate_strings(
             merged_options
         ).model_dump(exclude_none=True, exclude_unset=True)
-    kwargs = {}
-    if validated_options:
-        kwargs["options"] = validated_options
     session.set_model(model)
+    session.set_options(validated_options)
 
     if system:
         session.system = system
-    for frag in llm.cli.resolve_fragments(db, system_fragments or []):
-        session.attach(frag, system=True)
-    for frag in llm.cli.resolve_fragments(db, fragments_arg, allow_attachments=True):
-        session.attach(frag)
+    session.attach_fragments(system_fragments or [], system=True)
+    session.attach_fragments(fragments_arg, allow_attachments=True)
 
-    app = YellApp(session, validated_options, db)
+    app = YellApp(session)
     app.run()
     if session.conversation and session.conversation.responses:
         rich.print(f"Conversation saved as [green not bold]{session.conversation.id}")
@@ -253,11 +193,9 @@ class YellApp(textual.app.App):
         Binding("ctrl+c", "ctrl_c", "Exit, maybe", priority=True),
         Binding("ctrl+d", "exit", "Exit", priority=True),
     ]
-    def __init__(self, session: ChatSession, options: dict, db: sqlite_utils.Database):
+    def __init__(self, session: ChatSession):
         super().__init__(watch_css=True)
         self.session = session
-        self.options = options
-        self.db = db
     def compose(self) -> ComposeResult:
         yield textual.widgets.Header()
         for resp in self.session.conversation.responses:
@@ -301,10 +239,7 @@ class YellApp(textual.app.App):
                                 cast(AsyncModel, self.session.conversation.model)
                             )
                     case "/fragment":
-                        for frag in llm.cli.resolve_fragments(
-                            self.db, words[1:], allow_attachments=True
-                        ):
-                            self.session.attach(frag)
+                        self.session.attach_fragments(words[1:], allow_attachments=True)
                     case "/options":
                         self.action_show_options()
                     case _:
@@ -319,7 +254,7 @@ class YellApp(textual.app.App):
         new_md.border_title = self.session.conversation.model.model_id
         self.screen.anchor()
         await self.mount_all([umd, new_md], before=self.ta)
-        resp = self.session.run(text, self.options)
+        resp = self.session.run(text)
         self.run_worker(self.run_llm_response(new_md, resp), exclusive=True)
 
     async def action_accept(self):
@@ -342,8 +277,11 @@ class YellApp(textual.app.App):
             await new_md.update(full_resp)
         finally:
             self.ta.loading = False
+            # this is needed when the terminal is not focussed while the completion finished
+            # todo: manipulate the focus stack instead
+            self.ta.focus()
         for r in resp._responses:
-            (await r.to_sync_response()).log_to_db(self.db)
+            (await r.to_sync_response()).log_to_db(self.session.db)
 
     async def action_ctrl_c(self) -> None:
         # todo: bubble back so copying works
@@ -385,7 +323,7 @@ class YellApp(textual.app.App):
         t.add_column("Value")
         t.add_column("Description")
         for k, v in self.session.conversation.model.Options.model_fields.items():
-            t.add_row(k, str(self.options.get(k)), v.description)
+            t.add_row(k, str(self.session.options.get(k)), v.description)
         self.mount(textual.widgets.Static(t), before=self.ta)
 
 if __name__ == "__main__":
