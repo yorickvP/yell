@@ -1,0 +1,18 @@
+
+#yell-input {
+    min-height: 3;
+    max-height: 8;
+    height: 1;
+}
+
+.yell_user_prompt {
+  margin-left: 2;
+  background: $surface;
+  border: $primary;
+}
+
+.yell_response {
+  margin-right: 2;
+  border: $primary;
+}
+
