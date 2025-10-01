@@ -5,15 +5,16 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "click>=8.2.1",
+    "click>=8.3.0",
     "llm>=0.26",
     "llm-anthropic>=0.17",
     "llm-echo>=0.2",
-    "llm-gemini>=0.23",
+    "llm-gemini>=0.26",
     "prompt-toolkit>=3.0.51",
     "rich>=14.0.0",
     "sqlite-utils>=3.38",
-    "typer>=0.16.0",
+    "typer>=0.19.0",
+    "textual>=6.1.0",
 ]
 
 [build-system]
@@ -32,3 +33,6 @@ yell = "yell.index:app"
 
 [tool.deptry.per_rule_ignores]
 DEP002 = ["llm-anthropic", "llm-echo", "llm-gemini"]
+
+[tool.setuptools.package-data]
+yell = ["*.tcss"]
