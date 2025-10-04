@@ -35,7 +35,7 @@ class ShEnter:
     value = "shift+enter"
 
 
-ANSI_SEQUENCES_KEYS["\x1b\r"] = (ShEnter(),)
+ANSI_SEQUENCES_KEYS["\x1b\r"] = (ShEnter(),)  # type: ignore[reportIndexIssue]
 
 
 def models_list():
@@ -134,6 +134,8 @@ def main(
 
 
 class YellInput(textual.widgets.TextArea):
+    app: "YellApp"
+
     BINDINGS = [
         Binding("enter", "accept", "Send", priority=True),
         Binding("shift+backspace", "delete_left", "Delete character left", show=False),
@@ -164,12 +166,14 @@ class YellInput(textual.widgets.TextArea):
 class ModelProvider(textual.command.Provider):
     """A provider for themes."""
 
+    app: "YellApp"  # type: ignore[reportIncompatibleMethodOverride]
+
     @property
     def commands(self) -> list[tuple[str, Callable[[], None]]]:
         models = models_list()
 
         def set_model(name: str) -> None:
-            cast(YellApp, self.app).session.set_model(llm.get_async_model(name))
+            self.app.session.set_model(llm.get_async_model(name))
 
             self.app.title = (
                 f"Conversation with {self.app.session.conversation.model.model_id}"
