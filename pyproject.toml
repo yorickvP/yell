@@ -24,6 +24,7 @@ build-backend = "setuptools.build_meta"
 dev = [
     "deptry>=0.23.0",
     "pre-commit>=4.3.0",
+    "pyinstrument>=5.1.1",
     "pyright>=1.1.402",
     "ruff>=0.13.3",
     "textual-dev>=1.7.0",

@@ -3,21 +3,41 @@
     min-height: 3;
     max-height: 8;
     height: 1;
+    border: $primary round;
+}
+
+YellChats {
+  padding-top: 1;
 }
 
 YellPrompt {
   margin-left: 2;
   background: $surface;
-  border: $primary;
+  border: $primary vkey;
+  border-right: none;
+  padding: 1;
+  padding-right: 2;
+  padding-bottom: 0;
 }
 
 YellResponse {
   margin-right: 2;
-  border: $primary;
+  margin-top: 1;
+  border: $success vkey;
+  border-left: none;
+  padding: 1;
+  padding-left: 2;
+  padding-bottom: 0;
+  margin-bottom: 1;
+  background: $surface 30%;
 }
 
 YellHistory {
   width: 28;
   border-right: green vkey;
   background: $panel;
+}
+
+YellHistory > OptionList {
+  padding-left: 1;
 }

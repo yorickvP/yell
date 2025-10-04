@@ -24,7 +24,11 @@ from rich.text import Text
 from textual.actions import SkipAction
 from textual.app import ComposeResult, SystemCommand
 from textual.binding import Binding
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import (
+    Horizontal,
+    VerticalGroup,
+    VerticalScroll,
+)
 from textual.css.query import NoMatches
 from textual.messages import TerminalColorTheme
 from textual.reactive import Initialize, Reactive, reactive
@@ -115,8 +119,10 @@ def main(
 
     app = YellApp(session)
     app.run()
-    if session.conversation and session.conversation.responses:
-        rich.print(f"Conversation saved as [green not bold]{session.conversation.id}")
+    if app.session.conversation and app.session.conversation.responses:
+        rich.print(
+            f"Conversation saved as [green not bold]{app.session.conversation.id}"
+        )
     sys.exit(0)
 
 
@@ -230,19 +236,28 @@ class YellHistoryOption(textual.widgets.option_list.Option):
 class YellHistory(Widget):
     can_focus = False
     BINDINGS = [Binding("escape", "app.action_history(False)")]
-    session: Reactive[ChatSession] = reactive(Initialize(lambda self: self._session))
+    session: Reactive[ChatSession] = reactive(
+        Initialize(lambda self: cast(YellHistory, self)._session)
+    )
 
     def __init__(self, session: ChatSession, *args, **kwargs):
         self._session = session
         super().__init__(*args, **kwargs)
         db = get_db()
-        convs = list(db["conversations"].rows_where(order_by="id desc", limit=100))
-        # seen_ids = {c["id"] for c in convs}
-        # if self._session.conversation.id not in seen_ids:
-        #     self.options = [YellHistoryOption({"id": self._session.conversation.id, "name": self._session.conversation.name or "New Chat"})]
-        # else:
-        #     self.options = []
-        self.options = [YellHistoryOption(c) for c in convs]
+        convs = list(db["conversations"].rows_where(order_by="id desc", limit=1000))
+        seen_ids = {c["id"] for c in convs}
+        if self._session.conversation.id not in seen_ids:
+            self.options = [
+                YellHistoryOption(
+                    {
+                        "id": self._session.conversation.id,
+                        "name": self._session.conversation.name or "New Chat",
+                    }
+                )
+            ]
+        else:
+            self.options = []
+        self.options += [YellHistoryOption(c) for c in convs]
 
     def compose(self) -> ComposeResult:
         yield textual.widgets.OptionList(*self.options, compact=True)
@@ -270,7 +285,7 @@ class YellHistory(Widget):
 
 
 class YellPrompt(textual.widgets.Static):
-    BORDER_TITLE = "user"
+    BORDER_TITLE = "User"
 
 
 class YellResponse(textual.widgets.Markdown):
@@ -279,15 +294,29 @@ class YellResponse(textual.widgets.Markdown):
         self.border_title = model
 
 
-class YellChats(Widget):
-    session: Reactive[ChatSession] = reactive(Initialize(lambda self: self._session))
+class YellChats(VerticalGroup):
+    session: Reactive[ChatSession] = reactive(
+        Initialize(lambda self: cast(YellChats, self)._session)
+    )
 
     def __init__(self, session: ChatSession, *args, **kwargs):
         self._session = session
         super().__init__(*args, **kwargs)
 
     def compose(self) -> ComposeResult:
-        pass
+        for resp in self.session.conversation.responses:
+            if resp.prompt._prompt:
+                yield YellPrompt(resp.prompt._prompt, markup=False)
+                # prompt_session.history.append_string(resp.prompt._prompt)
+            if isinstance(resp, llm.AsyncResponse):
+                yield YellResponse(
+                    model=resp.resolved_model or resp.model.model_id,
+                    markdown=resp.text_or_raise(),
+                )
+
+    async def watch_session(self, old: ChatSession, curr: ChatSession):
+        if old.conversation.id != curr.conversation.id:
+            await self.recompose()
 
 
 class YellApp(textual.app.App):
@@ -303,28 +332,15 @@ class YellApp(textual.app.App):
         Binding("ctrl+n", "new_chat", "New chat"),
     ]
 
-    session: Reactive[ChatSession] = reactive(Initialize(lambda self: self._session))
+    session: Reactive[ChatSession] = reactive(
+        Initialize(lambda self: cast(YellApp, self)._session)
+    )
 
     def __init__(self, session: ChatSession):
         self._session = session
         super().__init__()
         self.theme = "catppuccin-latte"
         self._alt_selection = False
-
-    def container_items(self) -> list[Widget]:
-        res = []
-        for resp in self.session.conversation.responses:
-            if resp.prompt._prompt:
-                res.append(YellPrompt(resp.prompt._prompt, markup=False))
-                # prompt_session.history.append_string(resp.prompt._prompt)
-            if isinstance(resp, llm.AsyncResponse):
-                res.append(
-                    YellResponse(
-                        model=resp.resolved_model or resp.model.model_id,
-                        markdown=resp.text_or_raise(),
-                    )
-                )
-        return res
 
     def compose(self) -> ComposeResult:
         yield textual.widgets.Header()
@@ -333,7 +349,7 @@ class YellApp(textual.app.App):
             yield YellHistory(self.session)
             self.ta = YellInput(self, "", id="yell-input")
             self.container = VerticalScroll(
-                *self.container_items(),
+                YellChats(self.session).data_bind(YellApp.session),
                 self.ta,
                 can_focus=False,
                 can_focus_children=True,
@@ -385,13 +401,12 @@ class YellApp(textual.app.App):
                 return
 
         umd = YellPrompt(text, markup=False)
-        new_md = textual.widgets.Markdown("...", classes="yell_response")
+        new_md = YellResponse(self.session.conversation.model.model_id, "...")
         new_md.loading = True
         text_area = self.query_one(YellInput)
         text_area.loading = True
-        new_md.border_title = self.session.conversation.model.model_id
         self.container.anchor()
-        await self.container.mount_all([umd, new_md], before=text_area)
+        await self.query_one(YellChats).mount_all([umd, new_md])
         resp = self.session.run(text)
         self.run_worker(self.run_llm_response(new_md, resp), exclusive=True)
 
@@ -468,7 +483,8 @@ class YellApp(textual.app.App):
         self, message: textual.widgets.TextArea.Changed
     ) -> None:
         self.resize_textarea(self.query_one(YellInput))
-        await self.action_escape()
+        # hide if it's a new chat
+        # await self.action_escape()
 
     def resize_textarea(self, textarea: YellInput):
         cur_h = min(8, textarea.wrapped_document.height + 2)
@@ -497,21 +513,16 @@ class YellApp(textual.app.App):
         self._alt_selection = False
         if self.session.conversation.id == id_:
             return
-        with self.app.batch_update():
-            self.session = load_or_create_session(
-                _continue=False, conversation_id=id_, model_id=None
-            )
-            await self.container.remove_children("YellPrompt,YellResponse")
-            await self.container.mount_all(self.container_items(), before=self.ta)
+        self.container.anchor()
+        self.session = load_or_create_session(
+            _continue=False, conversation_id=id_, model_id=None
+        )
         self.ta.focus()
 
     async def action_new_chat(self):
-        with self.app.batch_update():
-            self.session = load_or_create_session(
-                _continue=False, conversation_id=None, model_id=None
-            )
-            await self.container.remove_children("YellPrompt,YellResponse")
-            await self.container.mount_all(self.container_items(), before=self.ta)
+        self.session = load_or_create_session(
+            _continue=False, conversation_id=None, model_id=None
+        )
 
     async def action_navigate(self, direction: Literal["down", "up"]):
         try:
