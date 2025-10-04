@@ -8,13 +8,11 @@ import llm.cli
 import llm.migrations
 import rich
 import rich.table
-from rich.text import Text
 import sqlite_utils
 import textual
 import textual.app
 import textual.command
 from textual.containers import VerticalScroll
-from textual.content import Content
 import textual.events
 from textual.messages import TerminalColorTheme
 import textual.widgets
@@ -208,7 +206,7 @@ class YellApp(textual.app.App):
         with self.container:
             for resp in self.session.conversation.responses:
                 if resp.prompt._prompt:
-                    umd = textual.widgets.Markdown(resp.prompt._prompt, classes="yell_user_prompt")
+                    umd = textual.widgets.Static(resp.prompt._prompt, classes="yell_user_prompt")
                     umd.border_title = "User"
                     yield umd
                     # prompt_session.history.append_string(resp.prompt._prompt)
@@ -261,7 +259,7 @@ class YellApp(textual.app.App):
                         self.notify(f"Unknown command {words[0]}", severity="error")
                 return
 
-        umd = textual.widgets.Markdown(text, classes="yell_user_prompt")
+        umd = textual.widgets.Static(text, classes="yell_user_prompt")
         umd.border_title = "User"
         new_md = textual.widgets.Markdown("...", classes="yell_response")
         new_md.loading = True
