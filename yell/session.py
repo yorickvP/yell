@@ -1,4 +1,3 @@
-
 from typing import Iterable
 
 import llm
@@ -11,7 +10,12 @@ from llm.models import AsyncModel
 
 
 class ChatSession:
-    def __init__(self, model: AsyncModel, conversation: llm.AsyncConversation | None, db: sqlite_utils.Database):
+    def __init__(
+        self,
+        model: AsyncModel,
+        conversation: llm.AsyncConversation | None,
+        db: sqlite_utils.Database,
+    ):
         self.console = rich.get_console()
         self.db = db
         self.fragments: list[llm.Fragment] = []
@@ -69,9 +73,17 @@ class ChatSession:
         self.attachments = []
         return response
 
-    def attach_fragments(self, fragments: Iterable[str], *, allow_attachments: bool = False, system: bool = False) -> None:
-        for frag in llm.cli.resolve_fragments(self.db, fragments, allow_attachments=allow_attachments):
+    def attach_fragments(
+        self,
+        fragments: Iterable[str],
+        *,
+        allow_attachments: bool = False,
+        system: bool = False,
+    ) -> None:
+        for frag in llm.cli.resolve_fragments(
+            self.db, fragments, allow_attachments=allow_attachments
+        ):
             self.attach(frag, system=system)
+
     def set_options(self, options: dict):
         self.options = options
-

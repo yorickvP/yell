@@ -12,9 +12,7 @@ import sqlite_utils
 import textual
 import textual.app
 import textual.command
-from textual.containers import VerticalScroll
 import textual.events
-from textual.messages import TerminalColorTheme
 import textual.widgets
 import typer
 from click.types import ParamType
@@ -22,6 +20,8 @@ from llm.models import AsyncChainResponse, AsyncModel
 from textual.actions import SkipAction
 from textual.app import ComposeResult, SystemCommand
 from textual.binding import Binding
+from textual.containers import VerticalScroll
+from textual.messages import TerminalColorTheme
 from textual.screen import Screen
 
 from .session import ChatSession
@@ -33,6 +33,8 @@ from textual._ansi_sequences import ANSI_SEQUENCES_KEYS
 
 class ShEnter:
     value = "shift+enter"
+
+
 ANSI_SEQUENCES_KEYS["\x1b\r"] = (ShEnter(),)
 
 
@@ -40,7 +42,6 @@ def models_list():
     for model_with_aliases in llm.get_models_with_aliases():
         yield model_with_aliases.model.model_id
         yield from model_with_aliases.aliases
-
 
 
 app = typer.Typer()
@@ -96,7 +97,8 @@ def main(
     conversation = None
     if conversation_id or _continue:
         conversation = cast(
-            llm.AsyncConversation | None, llm.cli.load_conversation(conversation_id, async_=True)
+            llm.AsyncConversation | None,
+            llm.cli.load_conversation(conversation_id, async_=True),
         )
         # if conversation:
         #     for resp in conversation.responses:
@@ -136,9 +138,11 @@ class YellInput(textual.widgets.TextArea):
         Binding("enter", "accept", "Send", priority=True),
         Binding("shift+backspace", "delete_left", "Delete character left", show=False),
     ]
+
     def __init__(self, sc, *args, **kwargs):
         self.sc = sc
         super().__init__(*args, **kwargs)
+
     async def _on_key(self, event: textual.events.Key) -> None:
         if event.key == "shift+enter":
             new_event = textual.events.Key("enter", character="\r")
@@ -147,6 +151,7 @@ class YellInput(textual.widgets.TextArea):
         else:
             new_event = event
         await super()._on_key(new_event)
+
     async def action_accept(self):
         await self.sc.action_accept()
 
@@ -156,7 +161,6 @@ class YellInput(textual.widgets.TextArea):
             self.call_next(self.app.resize_textarea, self)
 
 
-        
 class ModelProvider(textual.command.Provider):
     """A provider for themes."""
 
@@ -167,13 +171,12 @@ class ModelProvider(textual.command.Provider):
         def set_model(name: str) -> None:
             cast(YellApp, self.app).session.set_model(llm.get_async_model(name))
 
-            self.app.title = f"Conversation with {self.app.session.conversation.model.model_id}"
+            self.app.title = (
+                f"Conversation with {self.app.session.conversation.model.model_id}"
+            )
 
         # todo: filter discovery with no aliases
-        return [
-            (model, partial(set_model, model))
-            for model in models
-        ]
+        return [(model, partial(set_model, model)) for model in models]
 
     async def discover(self) -> textual.command.Hits:
         for command in self.commands:
@@ -190,6 +193,7 @@ class ModelProvider(textual.command.Provider):
                     callback,
                 )
 
+
 class YellApp(textual.app.App):
     CSS_PATH = "yell.tcss"
     BINDINGS = [
@@ -197,21 +201,27 @@ class YellApp(textual.app.App):
         Binding("ctrl+d", "exit", "Exit", priority=True),
         Binding("ctrl+m", "pick_model", "Select model"),
     ]
+
     def __init__(self, session: ChatSession):
         super().__init__(watch_css=True)
         self.session = session
+
     def compose(self) -> ComposeResult:
         yield textual.widgets.Header()
         self.container = VerticalScroll(can_focus=False, can_focus_children=True)
         with self.container:
             for resp in self.session.conversation.responses:
                 if resp.prompt._prompt:
-                    umd = textual.widgets.Static(resp.prompt._prompt, classes="yell_user_prompt")
+                    umd = textual.widgets.Static(
+                        resp.prompt._prompt, classes="yell_user_prompt"
+                    )
                     umd.border_title = "User"
                     yield umd
                     # prompt_session.history.append_string(resp.prompt._prompt)
                 if isinstance(resp, llm.AsyncResponse):
-                    md = textual.widgets.Markdown(resp.text_or_raise(), classes="yell_response")
+                    md = textual.widgets.Markdown(
+                        resp.text_or_raise(), classes="yell_response"
+                    )
                     md.border_title = resp.resolved_model or resp.model.model_id
                     yield md
 
@@ -228,9 +238,9 @@ class YellApp(textual.app.App):
     def on_terminal_color_theme(self, message: TerminalColorTheme):
         match message.theme:
             case "light":
-                self.theme = "catppuccin-latte" # "textual-light"
+                self.theme = "catppuccin-latte"  # "textual-light"
             case "dark":
-                self.theme = "catppuccin-mocha" # "textual-dark"
+                self.theme = "catppuccin-mocha"  # "textual-dark"
 
     async def accept_text(self, text):
         if not (text.strip() or self.session.attachments or self.session.fragments):
@@ -318,7 +328,11 @@ class YellApp(textual.app.App):
         yield SystemCommand("Options", "Show options", self.action_show_options)
 
     def action_pick_model(self) -> None:
-        self.push_screen(textual.command.CommandPalette(providers=[ModelProvider], placeholder="select a model"))
+        self.push_screen(
+            textual.command.CommandPalette(
+                providers=[ModelProvider], placeholder="select a model"
+            )
+        )
 
     def on_text_area_changed(self, message: textual.widgets.TextArea.Changed) -> None:
         self.resize_textarea(self.ta)
@@ -338,6 +352,7 @@ class YellApp(textual.app.App):
         for k, v in self.session.conversation.model.Options.model_fields.items():
             t.add_row(k, str(self.session.options.get(k)), v.description)
         self.container.mount(textual.widgets.Static(t), before=self.ta)
+
 
 if __name__ == "__main__":
     app()
