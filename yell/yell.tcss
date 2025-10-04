@@ -5,14 +5,19 @@
     height: 1;
 }
 
-.yell_user_prompt {
+YellPrompt {
   margin-left: 2;
   background: $surface;
   border: $primary;
 }
 
-.yell_response {
+YellResponse {
   margin-right: 2;
   border: $primary;
 }
 
+YellHistory {
+  width: 28;
+  border-right: green vkey;
+  background: $panel;
+}

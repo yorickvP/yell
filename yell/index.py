@@ -1,7 +1,8 @@
+import functools
 import sys
 from datetime import datetime
 from functools import partial
-from typing import Annotated, Any, Callable, Iterable, cast
+from typing import Annotated, Any, Callable, Iterable, Literal, cast
 
 import llm
 import llm.cli
@@ -14,15 +15,22 @@ import textual.app
 import textual.command
 import textual.events
 import textual.widgets
+import textual.widgets.option_list
 import typer
 from click.types import ParamType
 from llm.models import AsyncChainResponse, AsyncModel
+from rich.console import Group
+from rich.text import Text
 from textual.actions import SkipAction
 from textual.app import ComposeResult, SystemCommand
 from textual.binding import Binding
-from textual.containers import VerticalScroll
+from textual.containers import Horizontal, VerticalScroll
+from textual.css.query import NoMatches
 from textual.messages import TerminalColorTheme
+from textual.reactive import Initialize, Reactive, reactive
 from textual.screen import Screen
+from textual.types import OptionDoesNotExist
+from textual.widget import Widget
 
 from .session import ChatSession
 
@@ -89,11 +97,43 @@ def main(
         ),
     ] = None,
 ):
+    session = load_or_create_session(_continue, conversation_id, model_id)
+    model = session.conversation.model
+
+    validated_options = llm.cli.get_model_options(model.model_id)
+    if options:
+        merged_options = {**validated_options, **dict(options)}
+        validated_options = model.Options.model_validate_strings(
+            merged_options
+        ).model_dump(exclude_none=True, exclude_unset=True)
+    session.set_options(validated_options)
+
+    if system:
+        session.system = system
+    session.attach_fragments(system_fragments or [], system=True)
+    session.attach_fragments(fragments_arg, allow_attachments=True)
+
+    app = YellApp(session)
+    app.run()
+    if session.conversation and session.conversation.responses:
+        rich.print(f"Conversation saved as [green not bold]{session.conversation.id}")
+    sys.exit(0)
+
+
+@functools.cache
+def get_db() -> sqlite_utils.Database:
     # init code from cli.py
     log_path = llm.cli.logs_db_path()
     (log_path.parent).mkdir(parents=True, exist_ok=True)
     db = sqlite_utils.Database(log_path)
     llm.migrations.migrate(db)
+    return db
+
+
+def load_or_create_session(
+    _continue: bool, conversation_id: str | None, model_id: str | None
+):
+    db = get_db()
     conversation = None
     if conversation_id or _continue:
         conversation = cast(
@@ -112,25 +152,8 @@ def main(
             model_id = llm.get_default_model()
     model = llm.get_async_model(model_id)
     session = ChatSession(model, conversation, db)
-    validated_options = llm.cli.get_model_options(model.model_id)
-    if options:
-        merged_options = {**validated_options, **dict(options)}
-        validated_options = model.Options.model_validate_strings(
-            merged_options
-        ).model_dump(exclude_none=True, exclude_unset=True)
     session.set_model(model)
-    session.set_options(validated_options)
-
-    if system:
-        session.system = system
-    session.attach_fragments(system_fragments or [], system=True)
-    session.attach_fragments(fragments_arg, allow_attachments=True)
-
-    app = YellApp(session)
-    app.run()
-    if session.conversation and session.conversation.responses:
-        rich.print(f"Conversation saved as [green not bold]{session.conversation.id}")
-    sys.exit(0)
+    return session
 
 
 class YellInput(textual.widgets.TextArea):
@@ -175,9 +198,7 @@ class ModelProvider(textual.command.Provider):
         def set_model(name: str) -> None:
             self.app.session.set_model(llm.get_async_model(name))
 
-            self.app.title = (
-                f"Conversation with {self.app.session.conversation.model.model_id}"
-            )
+            self.app.mutate_reactive(YellApp.session)
 
         # todo: filter discovery with no aliases
         return [(model, partial(set_model, model)) for model in models]
@@ -198,46 +219,135 @@ class ModelProvider(textual.command.Provider):
                 )
 
 
+class YellHistoryOption(textual.widgets.option_list.Option):
+    def __init__(self, c: dict, *args, **kwargs):
+        t = Group(Text(c["name"], no_wrap=True))
+        id = c["id"]
+        self.text = c["name"]
+        super().__init__(t, id=id, *args, **kwargs)
+
+
+class YellHistory(Widget):
+    can_focus = False
+    BINDINGS = [Binding("escape", "app.action_history(False)")]
+    session: Reactive[ChatSession] = reactive(Initialize(lambda self: self._session))
+
+    def __init__(self, session: ChatSession, *args, **kwargs):
+        self._session = session
+        super().__init__(*args, **kwargs)
+        db = get_db()
+        convs = list(db["conversations"].rows_where(order_by="id desc", limit=100))
+        # seen_ids = {c["id"] for c in convs}
+        # if self._session.conversation.id not in seen_ids:
+        #     self.options = [YellHistoryOption({"id": self._session.conversation.id, "name": self._session.conversation.name or "New Chat"})]
+        # else:
+        #     self.options = []
+        self.options = [YellHistoryOption(c) for c in convs]
+
+    def compose(self) -> ComposeResult:
+        yield textual.widgets.OptionList(*self.options, compact=True)
+
+    def watch_session(self, prev: ChatSession, cur: ChatSession):
+        olist = self.query_one(textual.widgets.OptionList)
+        try:
+            opt_id = olist.get_option_index(cur.conversation.id)
+        except OptionDoesNotExist:
+            return
+        olist.highlighted = opt_id
+
+    def on_mount(self):
+        def adjust_hover(val):
+            if val:
+                self.tooltip = self.options[val].text
+            else:
+                self.tooltip = None
+
+        self.watch(
+            self.query_one(textual.widgets.OptionList),
+            "_mouse_hovering_over",
+            adjust_hover,
+        )
+
+
+class YellPrompt(textual.widgets.Static):
+    BORDER_TITLE = "user"
+
+
+class YellResponse(textual.widgets.Markdown):
+    def __init__(self, model: str, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.border_title = model
+
+
+class YellChats(Widget):
+    session: Reactive[ChatSession] = reactive(Initialize(lambda self: self._session))
+
+    def __init__(self, session: ChatSession, *args, **kwargs):
+        self._session = session
+        super().__init__(*args, **kwargs)
+
+    def compose(self) -> ComposeResult:
+        pass
+
+
 class YellApp(textual.app.App):
     CSS_PATH = "yell.tcss"
     BINDINGS = [
         Binding("ctrl+c", "ctrl_c", "Exit, maybe", priority=True, show=False),
-        Binding("ctrl+d", "exit", "Exit", priority=True),
-        Binding("ctrl+m", "pick_model", "Select model"),
+        Binding("ctrl+d", "exit", "Exit", priority=True, show=True),
+        Binding("ctrl+m", "pick_model", "Model"),
+        Binding("ctrl+o", "history", "History"),
+        Binding("alt+down", "navigate('down')", "Next conv"),
+        Binding("alt+up", "navigate('up')", "Previous conv"),
+        Binding("escape", "escape"),
+        Binding("ctrl+n", "new_chat", "New chat"),
     ]
 
+    session: Reactive[ChatSession] = reactive(Initialize(lambda self: self._session))
+
     def __init__(self, session: ChatSession):
-        super().__init__(watch_css=True)
-        self.session = session
+        self._session = session
+        super().__init__()
+        self.theme = "catppuccin-latte"
+        self._alt_selection = False
+
+    def container_items(self) -> list[Widget]:
+        res = []
+        for resp in self.session.conversation.responses:
+            if resp.prompt._prompt:
+                res.append(YellPrompt(resp.prompt._prompt, markup=False))
+                # prompt_session.history.append_string(resp.prompt._prompt)
+            if isinstance(resp, llm.AsyncResponse):
+                res.append(
+                    YellResponse(
+                        model=resp.resolved_model or resp.model.model_id,
+                        markdown=resp.text_or_raise(),
+                    )
+                )
+        return res
 
     def compose(self) -> ComposeResult:
         yield textual.widgets.Header()
-        self.container = VerticalScroll(can_focus=False, can_focus_children=True)
-        with self.container:
-            for resp in self.session.conversation.responses:
-                if resp.prompt._prompt:
-                    umd = textual.widgets.Static(
-                        resp.prompt._prompt, classes="yell_user_prompt"
-                    )
-                    umd.border_title = "User"
-                    yield umd
-                    # prompt_session.history.append_string(resp.prompt._prompt)
-                if isinstance(resp, llm.AsyncResponse):
-                    md = textual.widgets.Markdown(
-                        resp.text_or_raise(), classes="yell_response"
-                    )
-                    md.border_title = resp.resolved_model or resp.model.model_id
-                    yield md
-
+        self.hor = Horizontal()
+        with self.hor:
+            yield YellHistory(self.session)
             self.ta = YellInput(self, "", id="yell-input")
-            yield self.ta
+            self.container = VerticalScroll(
+                *self.container_items(),
+                self.ta,
+                can_focus=False,
+                can_focus_children=True,
+                id="chatarea",
+            )
+            yield self.container
         yield textual.widgets.Footer()
         self.c_c_time = None
 
     def on_mount(self):
-        self.title = f"Conversation with {self.session.conversation.model.model_id}"
         self.container.anchor()
-        self.log(str(self.ansi_theme))
+
+    def watch_session(self, old_session: ChatSession, new_session: ChatSession):
+        self.title = f"Conversation with {new_session.conversation.model.model_id}"
 
     def on_terminal_color_theme(self, message: TerminalColorTheme):
         match message.theme:
@@ -265,6 +375,7 @@ class YellApp(textual.app.App):
                             self.session.set_model(
                                 cast(AsyncModel, self.session.conversation.model)
                             )
+                        self.mutate_reactive(YellApp.session)
                     case "/fragment":
                         self.session.attach_fragments(words[1:], allow_attachments=True)
                     case "/options":
@@ -273,25 +384,27 @@ class YellApp(textual.app.App):
                         self.notify(f"Unknown command {words[0]}", severity="error")
                 return
 
-        umd = textual.widgets.Static(text, classes="yell_user_prompt")
-        umd.border_title = "User"
+        umd = YellPrompt(text, markup=False)
         new_md = textual.widgets.Markdown("...", classes="yell_response")
         new_md.loading = True
-        self.ta.loading = True
+        text_area = self.query_one(YellInput)
+        text_area.loading = True
         new_md.border_title = self.session.conversation.model.model_id
         self.container.anchor()
-        await self.container.mount_all([umd, new_md], before=self.ta)
+        await self.container.mount_all([umd, new_md], before=text_area)
         resp = self.session.run(text)
         self.run_worker(self.run_llm_response(new_md, resp), exclusive=True)
 
     async def action_accept(self):
-        new_text = self.ta.text
-        self.ta.text = ""
+        text_area = self.query_one(YellInput)
+        new_text = text_area.text
+        text_area.text = ""
         await self.accept_text(new_text)
 
     async def run_llm_response(self, new_md, resp: AsyncChainResponse):
         full_resp = ""
         first = True
+        session = self.session
         try:
             async for r in resp:
                 full_resp += r
@@ -303,12 +416,13 @@ class YellApp(textual.app.App):
                     await new_md.append(r)
             await new_md.update(full_resp)
         finally:
-            self.ta.loading = False
+            text_area = self.query_one(YellInput)
+            text_area.loading = False
             # this is needed when the terminal is not focussed while the completion finished
             # todo: manipulate the focus stack instead
-            self.ta.focus()
+            text_area.focus()
         for r in resp._responses:
-            (await r.to_sync_response()).log_to_db(self.session.db)
+            (await r.to_sync_response()).log_to_db(session.db)
 
     async def action_ctrl_c(self) -> None:
         # todo: bubble back so copying works
@@ -326,10 +440,22 @@ class YellApp(textual.app.App):
     async def action_exit(self) -> None:
         self.exit()
 
+    async def action_history(self, show_hide: bool | None = None) -> None:
+        try:
+            if show_hide in (False, None):
+                self.query_one(YellHistory).remove()
+        except NoMatches:
+            if show_hide in (True, None):
+                await self.hor.mount(YellHistory(self.session), before=0)
+                self.query_one(YellHistory).query_one(
+                    textual.widgets.OptionList
+                ).focus()
+
     def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
         yield from super().get_system_commands(screen)
         yield SystemCommand("Model", "Pick a model", self.action_pick_model)
         yield SystemCommand("Options", "Show options", self.action_show_options)
+        yield SystemCommand("Toggle history", "Toggle history", self.action_history)
 
     def action_pick_model(self) -> None:
         self.push_screen(
@@ -338,8 +464,11 @@ class YellApp(textual.app.App):
             )
         )
 
-    def on_text_area_changed(self, message: textual.widgets.TextArea.Changed) -> None:
-        self.resize_textarea(self.ta)
+    async def on_text_area_changed(
+        self, message: textual.widgets.TextArea.Changed
+    ) -> None:
+        self.resize_textarea(self.query_one(YellInput))
+        await self.action_escape()
 
     def resize_textarea(self, textarea: YellInput):
         cur_h = min(8, textarea.wrapped_document.height + 2)
@@ -356,6 +485,51 @@ class YellApp(textual.app.App):
         for k, v in self.session.conversation.model.Options.model_fields.items():
             t.add_row(k, str(self.session.options.get(k)), v.description)
         self.container.mount(textual.widgets.Static(t), before=self.ta)
+
+    async def on_option_list_option_selected(
+        self, message: textual.widgets.OptionList.OptionSelected
+    ):
+        id_ = message.option.id
+        if not id_:
+            return
+        if not self._alt_selection:
+            self.query_one(YellHistory).remove()
+        self._alt_selection = False
+        if self.session.conversation.id == id_:
+            return
+        with self.app.batch_update():
+            self.session = load_or_create_session(
+                _continue=False, conversation_id=id_, model_id=None
+            )
+            await self.container.remove_children("YellPrompt,YellResponse")
+            await self.container.mount_all(self.container_items(), before=self.ta)
+        self.ta.focus()
+
+    async def action_new_chat(self):
+        with self.app.batch_update():
+            self.session = load_or_create_session(
+                _continue=False, conversation_id=None, model_id=None
+            )
+            await self.container.remove_children("YellPrompt,YellResponse")
+            await self.container.mount_all(self.container_items(), before=self.ta)
+
+    async def action_navigate(self, direction: Literal["down", "up"]):
+        try:
+            optionlist = self.query_one("YellHistory > OptionList")
+        except NoMatches:
+            return
+        self._alt_selection = True
+        with self.app.batch_update():
+            await optionlist.run_action("cursor_" + direction)
+            await optionlist.run_action("select")
+
+    async def action_escape(self):
+        try:
+            if x := self.query_one(YellHistory):
+                if x.has_focus_within:
+                    await self.action_history(False)
+        except NoMatches:
+            return
 
 
 if __name__ == "__main__":
