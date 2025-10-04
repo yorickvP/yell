@@ -35,6 +35,7 @@ from textual.reactive import Initialize, Reactive, reactive
 from textual.screen import Screen
 from textual.types import OptionDoesNotExist
 from textual.widget import Widget
+from textual.worker import WorkerState
 
 from .session import ChatSession
 
@@ -240,8 +241,9 @@ class YellHistory(Widget):
         Initialize(lambda self: cast(YellHistory, self)._session)
     )
 
-    def __init__(self, session: ChatSession, *args, **kwargs):
+    def __init__(self, session: ChatSession, transient: bool, *args, **kwargs):
         self._session = session
+        self.transient = transient
         super().__init__(*args, **kwargs)
         db = get_db()
         convs = list(db["conversations"].rows_where(order_by="id desc", limit=1000))
@@ -330,11 +332,19 @@ class YellApp(textual.app.App):
         Binding("alt+up", "navigate('up')", "Previous conv"),
         Binding("escape", "escape"),
         Binding("ctrl+n", "new_chat", "New chat"),
+        Binding("pageup", "page_up", priority=True),
+        Binding("pagedown", "page_down", priority=True),
     ]
 
     session: Reactive[ChatSession] = reactive(
         Initialize(lambda self: cast(YellApp, self)._session)
     )
+
+    def action_page_up(self):
+        self.container.scroll_page_up()
+
+    def action_page_down(self):
+        self.container.scroll_page_down()
 
     def __init__(self, session: ChatSession):
         self._session = session
@@ -346,7 +356,7 @@ class YellApp(textual.app.App):
         yield textual.widgets.Header()
         self.hor = Horizontal()
         with self.hor:
-            yield YellHistory(self.session)
+            yield YellHistory(self.session, transient=True)
             self.ta = YellInput(self, "", id="yell-input")
             self.container = VerticalScroll(
                 YellChats(self.session).data_bind(YellApp.session),
@@ -408,7 +418,9 @@ class YellApp(textual.app.App):
         self.container.anchor()
         await self.query_one(YellChats).mount_all([umd, new_md])
         resp = self.session.run(text)
-        self.run_worker(self.run_llm_response(new_md, resp), exclusive=True)
+        self.worker = self.run_worker(
+            self.run_llm_response(new_md, resp), exclusive=True
+        )
 
     async def action_accept(self):
         text_area = self.query_one(YellInput)
@@ -461,7 +473,9 @@ class YellApp(textual.app.App):
                 self.query_one(YellHistory).remove()
         except NoMatches:
             if show_hide in (True, None):
-                await self.hor.mount(YellHistory(self.session), before=0)
+                await self.hor.mount(
+                    YellHistory(self.session, transient=False), before=0
+                )
                 self.query_one(YellHistory).query_one(
                     textual.widgets.OptionList
                 ).focus()
@@ -483,8 +497,11 @@ class YellApp(textual.app.App):
         self, message: textual.widgets.TextArea.Changed
     ) -> None:
         self.resize_textarea(self.query_one(YellInput))
-        # hide if it's a new chat
-        # await self.action_escape()
+        try:
+            if self.query_one(YellHistory).transient:
+                await self.query_one(YellHistory).remove()
+        except NoMatches:
+            pass
 
     def resize_textarea(self, textarea: YellInput):
         cur_h = min(8, textarea.wrapped_document.height + 2)
@@ -508,8 +525,8 @@ class YellApp(textual.app.App):
         id_ = message.option.id
         if not id_:
             return
-        if not self._alt_selection:
-            self.query_one(YellHistory).remove()
+        if not self._alt_selection and self.query_one(YellHistory).transient:
+            await self.query_one(YellHistory).remove()
         self._alt_selection = False
         if self.session.conversation.id == id_:
             return
@@ -535,6 +552,8 @@ class YellApp(textual.app.App):
             await optionlist.run_action("select")
 
     async def action_escape(self):
+        if self.worker and self.worker.state == WorkerState.RUNNING:
+            self.worker.cancel()
         try:
             if x := self.query_one(YellHistory):
                 if x.has_focus_within:
