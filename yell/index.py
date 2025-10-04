@@ -328,10 +328,20 @@ class YellApp(textual.app.App):
         Binding("ctrl+d", "exit", "Exit", priority=True, show=True),
         Binding("ctrl+m", "pick_model", "Model"),
         Binding("ctrl+o", "history", "History"),
-        Binding("alt+down", "navigate('down')", "Next conv"),
-        Binding("alt+up", "navigate('up')", "Previous conv"),
+        Binding(
+            "alt+down",
+            "navigate('down')",
+            "Next conv",
+            group=Binding.Group(description="Navigate Chats"),
+        ),
+        Binding(
+            "alt+up",
+            "navigate('up')",
+            "Previous conv",
+            group=Binding.Group(description="Navigate Chats"),
+        ),
         Binding("escape", "escape"),
-        Binding("ctrl+n", "new_chat", "New chat"),
+        Binding("ctrl+n", "new_chat", "New Chat"),
         Binding("pageup", "page_up", priority=True),
         Binding("pagedown", "page_down", priority=True),
     ]
@@ -341,10 +351,10 @@ class YellApp(textual.app.App):
     )
 
     def action_page_up(self):
-        self.container.scroll_page_up()
+        self.query_one("#chatarea").scroll_page_up()
 
     def action_page_down(self):
-        self.container.scroll_page_down()
+        self.query_one("#chatarea").scroll_page_down()
 
     def __init__(self, session: ChatSession):
         self._session = session
@@ -370,10 +380,11 @@ class YellApp(textual.app.App):
         self.c_c_time = None
 
     def on_mount(self):
-        self.container.anchor()
+        self.query_one("#chatarea").anchor()
 
     def watch_session(self, old_session: ChatSession, new_session: ChatSession):
         self.title = f"Conversation with {new_session.conversation.model.model_id}"
+        self.sub_title = f"id {new_session.conversation.id}"
 
     def on_terminal_color_theme(self, message: TerminalColorTheme):
         match message.theme:
@@ -415,7 +426,7 @@ class YellApp(textual.app.App):
         new_md.loading = True
         text_area = self.query_one(YellInput)
         text_area.loading = True
-        self.container.anchor()
+        self.query_one("#chatarea").anchor()
         await self.query_one(YellChats).mount_all([umd, new_md])
         resp = self.session.run(text)
         self.worker = self.run_worker(
@@ -505,11 +516,11 @@ class YellApp(textual.app.App):
 
     def resize_textarea(self, textarea: YellInput):
         cur_h = min(8, textarea.wrapped_document.height + 2)
-        self.container.anchor()
+        self.query_one("#chatarea").anchor()
         textarea.styles.height = cur_h
 
     def action_show_options(self) -> None:
-        self.container.anchor()
+        self.query_one("#chatarea").anchor()
 
         t = rich.table.Table()
         t.add_column("Name")
@@ -517,7 +528,7 @@ class YellApp(textual.app.App):
         t.add_column("Description")
         for k, v in self.session.conversation.model.Options.model_fields.items():
             t.add_row(k, str(self.session.options.get(k)), v.description)
-        self.container.mount(textual.widgets.Static(t), before=self.ta)
+        self.query_one(YellChats).mount(textual.widgets.Static(t))
 
     async def on_option_list_option_selected(
         self, message: textual.widgets.OptionList.OptionSelected
@@ -530,7 +541,7 @@ class YellApp(textual.app.App):
         self._alt_selection = False
         if self.session.conversation.id == id_:
             return
-        self.container.anchor()
+        self.query_one("#chatarea").anchor()
         self.session = load_or_create_session(
             _continue=False, conversation_id=id_, model_id=None
         )
