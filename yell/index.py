@@ -8,11 +8,15 @@ import llm.cli
 import llm.migrations
 import rich
 import rich.table
+from rich.text import Text
 import sqlite_utils
 import textual
 import textual.app
 import textual.command
+from textual.containers import VerticalScroll
+from textual.content import Content
 import textual.events
+from textual.messages import TerminalColorTheme
 import textual.widgets
 import typer
 from click.types import ParamType
@@ -131,7 +135,7 @@ def main(
 
 class YellInput(textual.widgets.TextArea):
     BINDINGS = [
-        Binding("enter", "accept", "Accept", priority=True),
+        Binding("enter", "accept", "Send", priority=True),
         Binding("shift+backspace", "delete_left", "Delete character left", show=False),
     ]
     def __init__(self, sc, *args, **kwargs):
@@ -164,7 +168,8 @@ class ModelProvider(textual.command.Provider):
 
         def set_model(name: str) -> None:
             cast(YellApp, self.app).session.set_model(llm.get_async_model(name))
-            # todo: update header
+
+            self.app.title = f"Conversation with {self.app.session.conversation.model.model_id}"
 
         # todo: filter discovery with no aliases
         return [
@@ -190,34 +195,44 @@ class ModelProvider(textual.command.Provider):
 class YellApp(textual.app.App):
     CSS_PATH = "yell.tcss"
     BINDINGS = [
-        Binding("ctrl+c", "ctrl_c", "Exit, maybe", priority=True),
+        Binding("ctrl+c", "ctrl_c", "Exit, maybe", priority=True, show=False),
         Binding("ctrl+d", "exit", "Exit", priority=True),
+        Binding("ctrl+m", "pick_model", "Select model"),
     ]
     def __init__(self, session: ChatSession):
         super().__init__(watch_css=True)
         self.session = session
     def compose(self) -> ComposeResult:
         yield textual.widgets.Header()
-        for resp in self.session.conversation.responses:
-            if resp.prompt._prompt:
-                umd = textual.widgets.Markdown(resp.prompt._prompt, classes="yell_user_prompt")
-                umd.border_title = "User"
-                yield umd
-                # prompt_session.history.append_string(resp.prompt._prompt)
-            if isinstance(resp, llm.AsyncResponse):
-                md = textual.widgets.Markdown(resp.text_or_raise(), classes="yell_response")
-                md.border_title = resp.resolved_model or resp.model.model_id
-                yield md
+        self.container = VerticalScroll(can_focus=False, can_focus_children=True)
+        with self.container:
+            for resp in self.session.conversation.responses:
+                if resp.prompt._prompt:
+                    umd = textual.widgets.Markdown(resp.prompt._prompt, classes="yell_user_prompt")
+                    umd.border_title = "User"
+                    yield umd
+                    # prompt_session.history.append_string(resp.prompt._prompt)
+                if isinstance(resp, llm.AsyncResponse):
+                    md = textual.widgets.Markdown(resp.text_or_raise(), classes="yell_response")
+                    md.border_title = resp.resolved_model or resp.model.model_id
+                    yield md
 
-        self.ta = YellInput(self, "", id="yell-input")
-        yield self.ta
-        # yield textual.widgets.Footer()
+            self.ta = YellInput(self, "", id="yell-input")
+            yield self.ta
+        yield textual.widgets.Footer()
         self.c_c_time = None
 
     def on_mount(self):
-        self.theme = "textual-light"
         self.title = f"Conversation with {self.session.conversation.model.model_id}"
-        self.screen.anchor()
+        self.container.anchor()
+        self.log(str(self.ansi_theme))
+
+    def on_terminal_color_theme(self, message: TerminalColorTheme):
+        match message.theme:
+            case "light":
+                self.theme = "catppuccin-latte" # "textual-light"
+            case "dark":
+                self.theme = "catppuccin-mocha" # "textual-dark"
 
     async def accept_text(self, text):
         if not (text.strip() or self.session.attachments or self.session.fragments):
@@ -252,8 +267,8 @@ class YellApp(textual.app.App):
         new_md.loading = True
         self.ta.loading = True
         new_md.border_title = self.session.conversation.model.model_id
-        self.screen.anchor()
-        await self.mount_all([umd, new_md], before=self.ta)
+        self.container.anchor()
+        await self.container.mount_all([umd, new_md], before=self.ta)
         resp = self.session.run(text)
         self.run_worker(self.run_llm_response(new_md, resp), exclusive=True)
 
@@ -312,11 +327,11 @@ class YellApp(textual.app.App):
 
     def resize_textarea(self, textarea: YellInput):
         cur_h = min(8, textarea.wrapped_document.height + 2)
-        self.screen.anchor()
+        self.container.anchor()
         textarea.styles.height = cur_h
 
     def action_show_options(self) -> None:
-        self.screen.anchor()
+        self.container.anchor()
 
         t = rich.table.Table()
         t.add_column("Name")
@@ -324,7 +339,7 @@ class YellApp(textual.app.App):
         t.add_column("Description")
         for k, v in self.session.conversation.model.Options.model_fields.items():
             t.add_row(k, str(self.session.options.get(k)), v.description)
-        self.mount(textual.widgets.Static(t), before=self.ta)
+        self.container.mount(textual.widgets.Static(t), before=self.ta)
 
 if __name__ == "__main__":
     app()
